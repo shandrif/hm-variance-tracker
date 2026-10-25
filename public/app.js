@@ -783,7 +783,7 @@ function switchTab(t) {
 }
 document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 $('gateBtn').onclick = () => unlock($('gatePw').value);
-$('gatePw').onkeydown = e => e.key === 'Enter' && unlock($('gatePw').value);
+$('gatePw').onkeydown = e => { if (e.key === 'Enter') unlock($('gatePw').value); };
 $('repSelect').onchange = e => selectReport(e.target.value);
 $('rmSelect').onchange = () => { $('amSelect').value = ''; $('brSelect').value = ''; fillManagers(); render(); };
 $('amSelect').onchange = () => { $('brSelect').value = ''; fillManagers(); render(); };
@@ -796,7 +796,7 @@ $('fileMap').onchange = e => { const f = e.target.files[0]; e.target.value = '';
 $('btnMapReset').onclick = () => { document.querySelector('details.more').open = false; resetMapping(); };
 $('btnDeleteReport').onclick = () => { document.querySelector('details.more').open = false; deleteReport(); };
 $('btnPublish').onclick = () => publish();
-$('passcode').onkeydown = e => e.key === 'Enter' && publish();
+$('passcode').onkeydown = e => { if (e.key === 'Enter') publish(); };
 $('btnRemark').onclick = () => state.all && state.all.length ? remarkDialog($('brSelect').value) : toast('Load a report first.');
 $('btnExport').onclick = () => state.all && state.all.length ? exportExcel() : toast('Load a report first.');
 $('btnLogout').onclick = () => { store.set('hmvPass', null); store.set('hmvAdmin', null); location.reload(); };
