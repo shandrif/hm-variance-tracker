@@ -25,12 +25,18 @@ Built in from SharePoint *UPDATED Span of control (Store Level)* (sheet **New**)
 `data/default-mapping.js`. To refresh: **Update data → Upload Span of Control** (admin passcode).
 Storages are linked to branches by their B-code, or by the name list in `STORAGE_ALIASES`.
 
+## Files
+- `public/` – the website (HTML, CSS, JS, logo, mapping, libraries)
+- `src/worker.js` – Cloudflare Worker: sends `/api/*` to `src/api.js`, everything else to `public/`
+- `src/api.js` – reports, mapping and remarks stored in D1
+- `wrangler.toml` – Worker name, static files folder and the D1 binding (`DB` → hm-variance-db)
+
 ## Cloudflare setup (one time)
 1. D1 database **hm-variance-db** already exists with the tables from `schema.sql`.
-2. Cloudflare dashboard → **Workers & Pages → Create → Pages → Connect to Git** → pick this repo.
-   Build command: *(none)* · Build output directory: `/`
-3. Project → **Settings → Bindings → Add → D1 database**: variable name `DB`, database `hm-variance-db`.
-4. Project → **Settings → Variables and Secrets** (type *Secret*):
+2. Cloudflare dashboard → **Workers & Pages → Create → Import a repository** → pick this repo.
+   Project name: `hm-variance-tracker` · Build command: *(empty)* · Deploy command: `npx wrangler deploy`
+   (the D1 binding comes from `wrangler.toml` automatically).
+3. Worker → **Settings → Variables and Secrets** → add two **Secrets**:
    - `VIEW_PASSWORD` – team password to open the dashboard
    - `ADMIN_PASSCODE` – admin passcode (upload, delete, mapping, read remarks)
-5. **Deployments → Retry deployment** so the binding and secrets take effect.
+4. Every push to `main` redeploys automatically.

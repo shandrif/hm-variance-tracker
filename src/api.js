@@ -1,5 +1,5 @@
-/* HM Variance Tracker — API (Cloudflare Pages Function + D1)
-   Bindings (Pages → Settings): D1 database "DB" = hm-variance-db
+/* HM Variance Tracker — API (Cloudflare Worker + D1)
+   D1 binding "DB" = hm-variance-db (set in wrangler.toml)
    Secrets: VIEW_PASSWORD (team password to open the dashboard)
             ADMIN_PASSCODE (upload / delete / mapping / read remarks) */
 
@@ -26,11 +26,10 @@ function roleOf(req, env) {
 }
 const clean = (s, n) => String(s ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, n);
 
-export async function onRequest({ request: req, env, params }) {
+export async function handleApi(req, env, path) {
   if (!env.DB) return fail('Database is not connected (bind D1 as "DB").', 500);
   if (!env.VIEW_PASSWORD || !env.ADMIN_PASSCODE) return fail('Passwords are not set up yet (VIEW_PASSWORD / ADMIN_PASSCODE).', 500);
 
-  const path = [].concat(params.path || []);
   const [res, id] = path;
   const m = req.method;
   const role = roleOf(req, env);
