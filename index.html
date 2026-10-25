@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Variance Tracker HM</title>
+<link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="locked">
+<header class="top"><div class="wrap">
+  <div class="brand">
+    <div class="mark" aria-hidden="true"><img src="assets/logo.png" alt=""></div>
+    <div><h1>Variance Tracker</h1><span id="period" class="muted">No data loaded</span></div>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn" id="btnRemark">✎ Add remark</button>
+    <button type="button" class="btn" id="btnExport">↓ Download Excel</button>
+    <details class="more">
+      <summary class="btn primary">Update data ▾</summary>
+      <div class="menu">
+        <label class="btn primary">↑ Upload variance report<input type="file" id="fileReport" accept=".xlsx,.xls,.xlsb" hidden></label>
+        <span class="muted small">The inventory reconciliation export (sheet <b>Data</b>). Each upload is saved as its own report period.</span>
+        <button class="btn danger" id="btnDeleteReport" hidden>Delete selected report…</button>
+        <hr>
+        <label class="btn">↑ Upload Span of Control<input type="file" id="fileMap" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn" id="btnMapReset">Reset to built-in mapping</button>
+        <span class="muted small" id="mapInfo"></span>
+        <hr>
+        <button class="btn" id="btnLogout">Lock this device</button>
+      </div>
+    </details>
+  </div>
+</div></header>
+
+<section id="gate" class="gate wrap" hidden>
+  <div class="card gate-card">
+    <div class="mark big" aria-hidden="true"><img src="assets/logo.png" alt=""></div>
+    <h2>Enter the dashboard password</h2>
+    <p class="muted">Ask the operations team for the password. It is remembered on this device.</p>
+    <input type="password" id="gatePw" placeholder="Password" autocomplete="current-password">
+    <button class="btn primary" id="gateBtn">Open dashboard</button>
+    <div id="gateMsg" class="small gate-msg" role="alert"></div>
+  </div>
+</section>
+
+<section class="filters"><div class="wrap">
+  <label>Report period
+    <select id="repSelect"></select>
+  </label>
+  <label>Regional manager
+    <select id="rmSelect"><option value="">All regional managers</option></select>
+  </label>
+  <label>Area manager
+    <select id="amSelect"><option value="">All area managers</option></select>
+  </label>
+  <label>Branch
+    <select id="brSelect"><option value="">All branches</option></select>
+  </label>
+  <label>Category
+    <select id="catSelect"><option value="">All categories</option></select>
+  </label>
+  <label>Count type
+    <select id="ktSelect"><option value="">Daily + weekly</option><option value="0">Daily counts</option><option value="1">Weekly counts</option></select>
+  </label>
+  <label class="check"><input type="checkbox" id="incTypos"> Include suspected typos</label>
+  <span id="scopeInfo" class="muted small"></span>
+</div></section>
+
+<div id="notice" class="notice wrap" role="status" hidden></div>
+<div id="publishBar" class="publish wrap" hidden>
+  <span><b>Not saved yet.</b> Enter the admin passcode to save this report for everyone.</span>
+  <input type="password" id="passcode" placeholder="Admin passcode" autocomplete="off">
+  <button class="btn primary" id="btnPublish">Publish for everyone</button>
+  <span id="pubMsg" class="small" aria-live="polite"></span>
+</div>
+
+<div class="tabbar wrap"><div class="tabs" id="tabs" role="tablist" aria-label="Dashboard sections">
+  <button role="tab" data-tab="overview" class="active" aria-selected="true">Overview</button>
+  <button role="tab" data-tab="branches" aria-selected="false">Branches</button>
+  <button role="tab" data-tab="weekly" aria-selected="false">Weekly by branch</button>
+  <button role="tab" data-tab="items" aria-selected="false">Items</button>
+  <button role="tab" data-tab="repeat" aria-selected="false">Repeat shortages</button>
+  <button role="tab" data-tab="breaches" aria-selected="false">Breaches</button>
+  <button role="tab" data-tab="managers" aria-selected="false">Managers</button>
+  <button role="tab" data-tab="checks" aria-selected="false">Typo check</button>
+  <button role="tab" data-tab="remarks" aria-selected="false" hidden id="tabRemarks">Remarks</button>
+</div></div>
+
+<main class="wrap">
+  <div id="empty" class="empty">
+    <h2 id="emptyTitle">Loading…</h2>
+    <p id="emptyText" class="muted">Fetching the published reports.</p>
+  </div>
+
+  <section id="tab-overview" class="tab" hidden>
+    <div class="kpis" id="kpis"></div>
+    <div class="card trend"><h3>Weekly variance <small>shortage and surplus in SAR · net under each week</small></h3><div class="chart trendchart"><canvas id="chTrend"></canvas></div></div>
+    <div class="grid g3">
+      <div class="card"><h3>Net variance by category <small>SAR</small></h3><div class="chart"><canvas id="chCat"></canvas></div></div>
+      <div class="card"><h3>Branches by status</h3><div class="chart"><canvas id="chStatus"></canvas></div></div>
+      <div class="card"><h3>Daily net variance <small>SAR</small></h3><div class="chart"><canvas id="chDay"></canvas></div></div>
+    </div>
+    <div class="grid g2">
+      <div class="card"><h3>Biggest shortage branches <small>net SAR · dashed line = breach limit</small></h3><div class="chart tall"><canvas id="chBranches"></canvas></div></div>
+      <div class="card"><h3>Biggest shortage items <small>net SAR</small></h3><div class="chart tall"><canvas id="chItems"></canvas></div></div>
+    </div>
+  </section>
+
+  <section id="tab-branches" class="tab" hidden>
+    <div class="toolbar"><input type="search" id="brSearch" placeholder="Search branch, code or manager…" aria-label="Search branches">
+      <select id="brStatus" aria-label="Filter by status"><option value="">All statuses</option><option value="breach">Breach</option><option value="watch">Watch</option><option value="ok">Normal</option><option value="surplus">High surplus</option></select>
+      <label class="inline">Breach limit <span class="inl"><input type="number" id="limitInput" step="500"><em>SAR</em></span></label>
+      <button class="btn" id="limitAuto" type="button">Auto</button>
+    </div>
+    <p class="muted small" id="limitNote"></p>
+    <div class="card tablewrap"><table id="tblBranches"></table></div>
+  </section>
+
+  <section id="tab-weekly" class="tab" hidden>
+    <p class="muted small">Net variance per branch per week (SAR). Red = shortage, green = surplus. Click a branch for detail.</p>
+    <div class="toolbar"><input type="search" id="wkSearch" placeholder="Search branch or manager…" aria-label="Search branches"></div>
+    <div class="card tablewrap"><table id="tblWeekly" class="heat"></table></div>
+  </section>
+
+  <section id="tab-items" class="tab" hidden>
+    <div class="toolbar"><input type="search" id="itSearch" placeholder="Search item or code…" aria-label="Search items">
+      <select id="itGroup" aria-label="Filter by stock group"></select></div>
+    <div class="card tablewrap"><table id="tblItems"></table></div>
+  </section>
+
+  <section id="tab-repeat" class="tab" hidden>
+    <div class="toolbar">
+      <input type="search" id="rpSearch" placeholder="Search branch or item…" aria-label="Search">
+      <label class="inline">Short at least <span class="inl"><input type="number" id="rpMin" value="5" min="2" step="1"><em>times</em></span></label>
+      <label class="inline">and at least <span class="inl"><input type="number" id="rpSar" value="200" min="0" step="50"><em>SAR</em></span></label>
+    </div>
+    <p class="muted small">The same item coming up short at the same branch again and again — the clearest sign of a process or control gap.</p>
+    <div class="card tablewrap"><table id="tblRepeat"></table></div>
+  </section>
+
+  <section id="tab-breaches" class="tab" hidden>
+    <div class="toolbar">
+      <select id="bzBranch" aria-label="Filter by branch"><option value="">All branches</option></select>
+      <select id="bzCat" aria-label="Filter by category"><option value="">All categories</option></select>
+      <button class="btn" id="bzCopy" type="button">⧉ Copy table</button>
+      <button class="btn primary" id="bzMail" type="button">✉ Email via Outlook</button>
+      <span id="bzStatus" class="muted small" aria-live="polite"></span>
+    </div>
+    <p class="muted small" id="bzNote"></p>
+    <div class="card tablewrap"><table id="tblBreaches"></table></div>
+  </section>
+
+  <section id="tab-managers" class="tab" hidden>
+    <h2 class="sect">Regional managers</h2>
+    <div class="card tablewrap"><table id="tblRM"></table></div>
+    <h2 class="sect">Area managers</h2>
+    <div class="card tablewrap"><table id="tblAM"></table></div>
+  </section>
+
+  <section id="tab-checks" class="tab" hidden>
+    <div class="kpis" id="ckKpis"></div>
+    <h2 class="sect">Suspected typos <small class="muted">left out of totals unless “Include suspected typos” is ticked</small></h2>
+    <div class="card tablewrap"><table id="tblTypos"></table></div>
+    <h2 class="sect">Large entries to double-check <small class="muted">kept in totals</small></h2>
+    <div class="toolbar"><input type="search" id="ckSearch" placeholder="Search branch or item…" aria-label="Search"></div>
+    <div class="card tablewrap"><table id="tblLarge"></table></div>
+    <h2 class="sect" id="unmappedTitle" hidden>Storages not matched to a branch</h2>
+    <div class="card tablewrap" id="unmappedWrap" hidden><table id="tblUnmapped"></table></div>
+  </section>
+
+  <section id="tab-remarks" class="tab" hidden>
+    <div class="toolbar"><input type="search" id="remSearch" placeholder="Search name, branch or remark…" aria-label="Search remarks">
+      <select id="remStatus"><option value="">All</option><option value="open">Open</option><option value="resolved">Resolved</option></select>
+      <button type="button" class="btn" id="remRefresh">↻ Refresh</button><span id="remMsg2" class="muted small" aria-live="polite"></span></div>
+    <div class="card tablewrap"><table id="tblRemarks"></table></div>
+  </section>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="modal" class="modal" hidden><div class="modal-box" id="modalBox" role="dialog" aria-modal="true" tabindex="-1"><button class="close" id="modalClose" aria-label="Close">✕</button><div id="modalBody"></div></div></div>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="vendor/chart.umd.js"></script>
+<script src="data/default-mapping.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

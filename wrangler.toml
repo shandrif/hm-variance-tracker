@@ -1,0 +1,8 @@
+name = "hm-variance-tracker"
+pages_build_output_dir = "."
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "hm-variance-db"
+database_id = "cd23a1df-9332-413d-baa6-7a012699a207"
