@@ -79,6 +79,7 @@ function matchStorage(name) {
 }
 function titleCase(s) { return String(s).toLowerCase().replace(/(^|[\s\-(/])([a-z])/g, (a, p, c) => p + c.toUpperCase()).replace(/\b(Pnu|Stc|Riy|Jed)\b/g, w => w.toUpperCase()); }
 
+const CODE_FIXES = { 'TAIF SHIFA': 'B118', 'SAUDI INVESTMENT BANK': 'B11', 'AL RAJHI BANK': 'B05', 'ABHA DABAB': 'B74', 'AL AHSA 2': 'B76' };
 function parseSpan(aoa) {
   let h = -1;
   for (let i = 0; i < Math.min(aoa.length, 15); i++) {
@@ -94,9 +95,11 @@ function parseSpan(aoa) {
   for (const r of aoa.slice(h + 1)) {
     const name = String(r[cB] || '').trim(); if (!name) continue;
     let code = cC >= 0 ? String(r[cC] || '').trim() : '';
-    if (!code) { const m = name.match(/B\s*0*(\d{1,3})/i); code = m ? 'B' + m[1] : /investment/i.test(name) ? 'SIB' : /rajhi/i.test(name) ? 'RAJHI' : ''; }
-    if (!code) continue;
-    rows.push({ code: normCode(code), branch: name.replace(/^B\s*\d+\s*[-–,]?\s*/i, '').trim(), am: String(r[cA] || '').trim(), rm: String(cR >= 0 ? r[cR] || '' : '').trim() });
+    if (!code) { const m = name.match(/^B\s*0*(\d{1,3})/i); code = m ? 'B' + m[1] : ''; }
+    const branch = name.replace(/^B\s*\d+\s*[-–,]?\s*/i, '').replace(/\s+/g, ' ').trim();
+    code = CODE_FIXES[branch.toUpperCase()] || code;   // same fixes as the Wastage Tracker sync
+    if (!code || rows.some(x => x.code === normCode(code))) continue;
+    rows.push({ code: normCode(code), branch, am: String(r[cA] || '').replace(/\s+/g, ' ').trim(), rm: String(cR >= 0 ? r[cR] || '' : '').replace(/\s+/g, ' ').trim() });
   }
   if (!rows.length) throw new Error('No branch rows found.');
   return rows;
@@ -658,7 +661,7 @@ async function refreshAll() {
   setEmpty('Loading…', 'Fetching the published reports.');
   try {
     const [reps, map] = await Promise.all([api('/reports').then(r => r.json()), api('/mapping').then(r => r.json()).catch(() => null)]);
-    if (map && map.rows && map.rows.length) setMapping(map.rows, map.source || 'uploaded'); else setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)');
+    if (map && map.rows && map.rows.length) setMapping(map.rows, (map.source || 'uploaded') + (map.updated_at ? ` (updated ${String(map.updated_at).slice(0, 10)})` : '')); else setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)');
     state.reports = reps;
     if (!reps.find(r => r.id === state.sel)) state.sel = reps[0] ? reps[0].id : '';
     renderReportSelect();
