@@ -10,3 +10,7 @@ binding = "ASSETS"
 binding = "DB"
 database_name = "hm-variance-db"
 database_id = "cd23a1df-9332-413d-baa6-7a012699a207"
+
+# Daily store-mapping sync from SharePoint: 05:00 UTC = 8:00 Riyadh
+[triggers]
+crons = ["0 5 * * *"]

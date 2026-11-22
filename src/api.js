@@ -3,6 +3,8 @@
    Secrets: VIEW_PASSWORD (team password to open the dashboard)
             ADMIN_PASSCODE (upload / delete / mapping / read remarks) */
 
+import { syncSharePoint, syncStatus, sharePointConfigured } from './sharepoint.js';
+
 const CHUNK = 700 * 1024;          // D1 rows are size-limited, so reports are stored in pieces
 const MAX_REPORTS = 12;
 
@@ -94,22 +96,29 @@ export async function handleApi(req, env, path) {
 
     /* branch → AM → RM mapping */
     if (res === 'mapping') {
-      if (m === 'GET') {
+      if (m === 'GET' && !id) {
         const r = await env.DB.prepare('SELECT rows,source,updated_at FROM mapping WHERE id=1').first();
-        return json(r ? { rows: JSON.parse(r.rows), source: r.source, updated_at: r.updated_at } : null);
+        const sync = { configured: sharePointConfigured(env), last: admin ? await syncStatus(env) : null };
+        return json(r ? { rows: JSON.parse(r.rows), source: r.source, updated_at: r.updated_at, sync } : { rows: null, sync });
       }
-      if (m === 'PUT') {
+      if (m === 'POST' && id === 'sync') {      // pull the Span of Control from SharePoint now
+        if (!admin) return needAdmin();
+        const force = new URL(req.url).searchParams.get('force') === '1';
+        const r = await syncSharePoint(env, { force });
+        return json(r, r.ok ? 200 : 502);
+      }
+      if (m === 'PUT' && !id) {
         if (!admin) return needAdmin();
         const b = await req.json();
         if (!Array.isArray(b.rows) || !b.rows.length) return fail('No mapping rows');
-        const rows = b.rows.slice(0, 500).map(r => ({ code: clean(r.code, 12), branch: clean(r.branch, 80), am: clean(r.am, 80), rm: clean(r.rm, 80) }))
+        const rows = b.rows.slice(0, 500).map(r => ({ code: clean(r.code, 12), branch: clean(r.branch, 80), am: clean(r.am, 80), aom: clean(r.aom, 80), rm: clean(r.rm, 80) }))
           .filter(r => r.code);
         await env.DB.prepare(`INSERT INTO mapping(id,rows,source,updated_at) VALUES(1,?,?,datetime('now'))
           ON CONFLICT(id) DO UPDATE SET rows=excluded.rows,source=excluded.source,updated_at=excluded.updated_at`)
           .bind(JSON.stringify(rows), clean(b.source, 200)).run();
         return json({ saved: rows.length });
       }
-      if (m === 'DELETE') {
+      if (m === 'DELETE' && !id) {
         if (!admin) return needAdmin();
         await env.DB.prepare('DELETE FROM mapping WHERE id=1').run();
         return json({ reset: true });

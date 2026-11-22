@@ -28,7 +28,7 @@ const state = {
   cache: {},            // id -> parsed report
   local: null,          // freshly uploaded, not yet published
   sel: null,            // selected report id ('' = all combined, null = not chosen yet)
-  branches: [], branchByCode: {}, mapSource: 'built-in',
+  branches: [], branchByCode: {}, mapSource: 'built-in', hasAom: false, sync: null,
   recs: [],             // active records (enriched)
   limitOverride: null,
   tab: 'overview', charts: {}, sort: {}, remarks: []
@@ -54,6 +54,9 @@ function setMapping(rows, source) {
   state.branches = rows.map(r => ({ ...r, code: normCode(r.code) }));
   state.branchByCode = Object.fromEntries(state.branches.map(b => [b.code, b]));
   state.mapSource = source || 'built-in';
+  state.hasAom = state.branches.some(b => b.aom);
+  $('aomWrap').hidden = !state.hasAom;
+  if (!state.hasAom) $('aomSelect').value = '';
   $('mapInfo').textContent = `Mapping: ${state.mapSource} · ${state.branches.length} branches`;
   storageCache.clear();
 }
@@ -75,38 +78,14 @@ function matchStorage(name) {
   }
   if (code) code = normCode(code);
   const b = code && state.branchByCode[code];
-  const res = b ? { code, branch: titleCase(b.branch), am: b.am || 'Unassigned', rm: b.rm || 'Unassigned', mapped: true }
-    : { code: code || '—', branch: s.replace(/\s*main\s*storag\w*\s*$/i, '').trim() || s, am: 'Unassigned', rm: 'Unassigned', mapped: false };
+  const res = b ? { code, branch: titleCase(b.branch), am: b.am || 'Unassigned', aom: b.aom || 'Unassigned', rm: b.rm || 'Unassigned', mapped: true }
+    : { code: code || '—', branch: s.replace(/\s*main\s*storag\w*\s*$/i, '').trim() || s, am: 'Unassigned', aom: 'Unassigned', rm: 'Unassigned', mapped: false };
   storageCache.set(name, res);
   return res;
 }
 function titleCase(s) { return String(s).toLowerCase().replace(/(^|[\s\-(/])([a-z])/g, (a, p, c) => p + c.toUpperCase()).replace(/\b(Pnu|Stc|Riy|Jed)\b/g, w => w.toUpperCase()); }
 
-const CODE_FIXES = { 'TAIF SHIFA': 'B118', 'SAUDI INVESTMENT BANK': 'B11', 'AL RAJHI BANK': 'B05', 'ABHA DABAB': 'B74', 'AL AHSA 2': 'B76' };
-function parseSpan(aoa) {
-  let h = -1;
-  for (let i = 0; i < Math.min(aoa.length, 15); i++) {
-    const r = aoa[i].map(x => String(x || '').toUpperCase());
-    if (r.some(x => x.includes('AREA MANAGER')) && r.some(x => x.includes('BRANCH'))) { h = i; break; }
-  }
-  if (h < 0) throw new Error('Could not find the “BRANCH” and “AREA MANAGER” columns.');
-  const hdr = aoa[h].map(x => String(x || '').toUpperCase().trim());
-  const ci = f => hdr.findIndex(f);
-  const cB = ci(x => x.startsWith('BRANCH')), cA = ci(x => x.startsWith('AREA MANAGER')),
-    cR = ci(x => x.includes('REGIONAL') || x === 'ROM'), cC = ci(x => x === 'CODE' || x === 'BRANCH CODE');
-  const rows = [];
-  for (const r of aoa.slice(h + 1)) {
-    const name = String(r[cB] || '').trim(); if (!name) continue;
-    let code = cC >= 0 ? String(r[cC] || '').trim() : '';
-    if (!code) { const m = name.match(/^B\s*0*(\d{1,3})/i); code = m ? 'B' + m[1] : ''; }
-    const branch = name.replace(/^B\s*\d+\s*[-–,]?\s*/i, '').replace(/\s+/g, ' ').trim();
-    code = CODE_FIXES[branch.toUpperCase()] || code;   // same fixes as the Wastage Tracker sync
-    if (!code || rows.some(x => x.code === normCode(code))) continue;
-    rows.push({ code: normCode(code), branch, am: String(r[cA] || '').replace(/\s+/g, ' ').trim(), rm: String(cR >= 0 ? r[cR] || '' : '').replace(/\s+/g, ' ').trim() });
-  }
-  if (!rows.length) throw new Error('No branch rows found.');
-  return rows;
-}
+/* reading the Span of Control file lives in span-parse.js (shared with the SharePoint sync) */
 
 /* ---------- report parsing ---------- */
 const COLS = {
@@ -232,9 +211,9 @@ function flagRecords(recs) {
 
 /* ---------- scope (filters) ---------- */
 function scope({ ignoreBranch = false, ignoreMgr = false, ignoreCat = false } = {}) {
-  const rm = $('rmSelect').value, am = $('amSelect').value, br = $('brSelect').value, cat = $('catSelect').value, kt = $('ktSelect').value;
+  const br = $('brSelect').value, cat = $('catSelect').value, kt = $('ktSelect').value;
   const inc = $('incTypos').checked;
-  return state.all.filter(r => (inc || !r.typo) && (ignoreMgr || ((!rm || r.rm === rm) && (!am || r.am === am))) &&
+  return state.all.filter(r => (inc || !r.typo) && (ignoreMgr || mgrOk(r)) &&
     (ignoreBranch || !br || r.st === br) && (ignoreCat || !cat || r.cat === cat) && (kt === '' || r.k === +kt));
 }
 function fillSelect(sel, vals, allLabel, labels) {
@@ -242,14 +221,21 @@ function fillSelect(sel, vals, allLabel, labels) {
   sel.innerHTML = `<option value="">${esc(allLabel)}</option>` + vals.map((v, i) => `<option value="${esc(v)}">${esc(labels ? labels[i] : v)}</option>`).join('');
   if (vals.includes(cur)) sel.value = cur;
 }
+/* manager filters cascade: regional manager → area operations manager → area manager → branch */
+function mgrOk(r) {
+  const rm = $('rmSelect').value, aom = $('aomSelect').value, am = $('amSelect').value;
+  return (!rm || r.rm === rm) && (!aom || r.aom === aom) && (!am || r.am === am);
+}
 function fillManagers() {
-  const rm = $('rmSelect').value, am = $('amSelect').value;
+  const rm = $('rmSelect').value, aom = $('aomSelect').value;
   const rms = [...new Set(state.all.map(r => r.rm))].sort();
-  fillSelect($('rmSelect'), rms, 'All regional managers');
-  const ams = [...new Set(state.all.filter(r => !rm || r.rm === rm).map(r => r.am))].sort();
+  fillSelect($('rmSelect'), rms, 'All ROMs');
+  const aoms = [...new Set(state.all.filter(r => !rm || r.rm === rm).map(r => r.aom))].sort();
+  fillSelect($('aomSelect'), aoms, 'All AOMs');
+  const ams = [...new Set(state.all.filter(r => (!rm || r.rm === rm) && (!aom || r.aom === aom)).map(r => r.am))].sort();
   fillSelect($('amSelect'), ams, 'All area managers');
   const brs = new Map();
-  state.all.filter(r => (!rm || r.rm === rm) && (!am || r.am === am)).forEach(r => brs.set(r.st, `${r.branch} (${r.code})`));
+  state.all.filter(mgrOk).forEach(r => brs.set(r.st, `${r.branch} (${r.code})`));
   const keys = [...brs.keys()].sort((a, b) => brs.get(a).localeCompare(brs.get(b)));
   fillSelect($('brSelect'), keys, 'All branches', keys.map(k => brs.get(k)));
   fillSelect($('bzBranch'), keys, 'All branches', keys.map(k => brs.get(k)));
@@ -272,7 +258,7 @@ function branchStats(recs) {
   const rows = agg(recs, r => r.st).map(a => {
     const r0 = a.recs[0], byCat = {};
     for (const r of a.recs) byCat[r.cat] = (byCat[r.cat] || 0) + r.v;
-    return { ...a, st: a.key, branch: r0.branch, code: r0.code, am: r0.am, rm: r0.rm, byCat, days: new Set(a.recs.map(r => r.d)).size };
+    return { ...a, st: a.key, branch: r0.branch, code: r0.code, am: r0.am, aom: r0.aom, rm: r0.rm, byCat, days: new Set(a.recs.map(r => r.d)).size };
   });
   return rows;
 }
@@ -398,10 +384,10 @@ function branches(sc) {
   const q = $('brSearch').value.toLowerCase(), f = $('brStatus').value;
   const cats = [...new Set(sc.map(r => r.cat))].sort((a, b) => sc.filter(r => r.cat === b).length - sc.filter(r => r.cat === a).length).slice(0, 4);
   const rows = branchStats(sc).map(b => ({ ...b, status: statusOf(b.net, L) }))
-    .filter(b => (!q || `${b.branch} ${b.code} ${b.am} ${b.rm}`.toLowerCase().includes(q)) && (!f || b.status === f));
+    .filter(b => (!q || `${b.branch} ${b.code} ${b.am} ${b.aom} ${b.rm}`.toLowerCase().includes(q)) && (!f || b.status === f));
   table($('tblBranches'), [
     { h: 'Branch', k: 'branch', l: 1, f: r => `<b>${esc(r.branch)}</b> <span class="muted small">${esc(r.code)}</span>`, x: r => r.branch },
-    { h: 'Code', k: 'code' }, { h: 'Area manager', k: 'am', l: 1 }, { h: 'Regional manager', k: 'rm', l: 1 },
+    { h: 'Code', k: 'code' }, { h: 'Area manager', k: 'am', l: 1 }, ...aomCol(), { h: 'ROM', k: 'rm', l: 1 },
     { ...money('net', 'Net SAR'), sort: 1 }, money('short', 'Shortage SAR'), money('surplus', 'Surplus SAR'),
     ...cats.map(c => ({ h: c, val: r => r.byCat[c] || 0, f: r => `<span class="${cls(r.byCat[c] || 0)}">${sar(r.byCat[c] || 0)}</span>`, x: r => Math.round(r.byCat[c] || 0) })),
     { h: 'Lines', k: 'n' }, { h: 'Status', k: 'status', val: r => ['breach', 'watch', 'ok', 'surplus'].indexOf(r.status), f: r => `<span class="chip ${r.status}">${STATUS_LBL[r.status]}</span>`, x: r => STATUS_LBL[r.status] }
@@ -466,7 +452,6 @@ function repeat(sc) {
 function breaches(sc) {
   const L = limits(), base = L.base;
   const brF = $('bzBranch').value, catF = $('bzCat').value;
-  const rm = $('rmSelect').value, am = $('amSelect').value;
   const out = [];
   const cats = ['Total', ...[...new Set(base.map(r => r.cat))].sort()];
   for (const c of cats) {
@@ -476,11 +461,11 @@ function breaches(sc) {
     const lim = c === 'Total' ? L.breach : Math.min(0, m - 1.96 * s);
     for (const b of bs) if (b.net <= lim && b.net < 0) out.push({ ...b, cat: c, lim, over: b.net - lim, top: topItems(b.recs, 2) });
   }
-  const rows = out.filter(r => (!brF || r.st === brF) && (!catF || r.cat === catF) && (!rm || r.rm === rm) && (!am || r.am === am));
+  const rows = out.filter(r => (!brF || r.st === brF) && (!catF || r.cat === catF) && mgrOk(r));
   $('bzNote').textContent = `${rows.length} breach${rows.length === 1 ? '' : 'es'}. A branch is in breach for a category when its net variance is at or below that category's limit (average − 1.96 × spread across all branches). Sorted worst first.`;
   table($('tblBreaches'), [
     { h: 'Branch', k: 'branch', l: 1, f: r => `<b>${esc(r.branch)}</b> <span class="muted small">${esc(r.code)}</span>`, x: r => r.branch },
-    { h: 'Area manager', k: 'am', l: 1 }, { h: 'Regional manager', k: 'rm', l: 1 }, { h: 'Variance type', k: 'cat', l: 1 },
+    { h: 'Area manager', k: 'am', l: 1 }, ...aomCol(), { h: 'ROM', k: 'rm', l: 1 }, { h: 'Variance type', k: 'cat', l: 1 },
     { ...money('net', 'Net SAR'), sort: 1 }, { h: 'Limit SAR', k: 'lim', f: r => sarPlain(r.lim), x: r => Math.round(r.lim) },
     { h: 'Beyond limit', k: 'over', f: r => `<span class="neg">${sar(r.over)}</span>`, x: r => Math.round(r.over) },
     { h: 'Main items short', k: 'top', l: 1, f: r => esc(r.top), x: r => r.top }
@@ -502,14 +487,20 @@ function managers(sc) {
       { ...money('net', 'Net SAR'), sort: 1 }, money('short', 'Shortage SAR'), money('surplus', 'Surplus SAR'), money('avg', 'Avg per branch'),
       { h: 'In breach', k: 'breach', f: r => r.breach ? `<span class="chip breach">${r.breach}</span>` : '0' },
       { h: 'Worst branch', k: 'worst', l: 1, val: r => r.worst?.net || 0, f: r => r.worst ? `${esc(r.worst.branch)} <span class="neg">${sar(r.worst.net)}</span>` : '', x: r => r.worst ? `${r.worst.branch} (${Math.round(r.worst.net)})` : '' }
-    ], rows, key, r => { if (key === 'rm') { $('rmSelect').value = r.name; fillManagers(); } else { $('amSelect').value = r.name; $('brSelect').value = ''; fillManagers(); } switchTab('branches'); });
+    ], rows, key, r => {
+      if (key === 'rm') { $('rmSelect').value = r.name; $('aomSelect').value = ''; $('amSelect').value = ''; }
+      else if (key === 'aom') { $('aomSelect').value = r.name; $('amSelect').value = ''; }
+      else $('amSelect').value = r.name;
+      $('brSelect').value = ''; fillManagers(); switchTab('branches'); });
   };
-  mk(r => r.rm, $('tblRM'), 'rm', 'Regional manager');
+  mk(r => r.rm, $('tblRM'), 'rm', 'ROM');
+  $('aomTitle').hidden = $('aomTblWrap').hidden = !state.hasAom;
+  if (state.hasAom) mk(r => r.aom, $('tblAOM'), 'aom', 'Area operations manager');
   mk(r => r.am, $('tblAM'), 'am', 'Area manager');
 }
 
 function checks() {
-  const all = state.all.filter(r => (!$('rmSelect').value || r.rm === $('rmSelect').value) && (!$('amSelect').value || r.am === $('amSelect').value) && (!$('brSelect').value || r.st === $('brSelect').value));
+  const all = state.all.filter(r => mgrOk(r) && (!$('brSelect').value || r.st === $('brSelect').value));
   const typos = all.filter(r => r.typo), large = all.filter(r => r.large), q = $('ckSearch').value.toLowerCase();
   const unm = [...new Set(state.all.filter(r => !r.mapped).map(r => r.st))];
   $('ckKpis').innerHTML = [
@@ -581,7 +572,7 @@ function branchModal(st) {
   const its = agg(sc, r => r.ic).sort((a, b) => a.net - b.net);
   const row = a => `<tr class="click" data-ic="${esc(a.key)}"><td class="l">${esc(trunc(a.recs[0].n, 44))}</td><td class="${cls(a.q)}">${qty(a.q, a.recs[0].u)}</td><td class="${cls(a.net)}">${sar(a.net)}</td></tr>`;
   openModal(`<h2>${esc(r0.branch)} <span class="muted">${esc(r0.code)}</span></h2>
-    <p class="muted">${esc(r0.am)} · ${esc(r0.rm)} · <span class="chip ${statusOf(net, L)}">${STATUS_LBL[statusOf(net, L)]}</span></p>
+    <p class="muted">AM ${esc(r0.am)}${state.hasAom ? ` · AOM ${esc(r0.aom)}` : ''} · ROM ${esc(r0.rm)} · <span class="chip ${statusOf(net, L)}">${STATUS_LBL[statusOf(net, L)]}</span></p>
     <div class="kv"><div><span>Net</span><b class="${cls(net)}">${sar(net)}</b></div><div><span>Shortage</span><b class="neg">${sar(short)}</b></div><div><span>Surplus</span><b class="pos">${sar(net - short)}</b></div><div><span>Lines</span><b>${sc.length}</b></div></div>
     <h3>By category</h3><table><tbody>${cats.map(c => `<tr><td class="l">${esc(c.key)}</td><td class="${cls(c.net)}">${sar(c.net)}</td></tr>`).join('')}</tbody></table>
     <div class="chart" style="height:200px;margin-top:14px"><canvas id="chModal"></canvas></div>
@@ -640,7 +631,7 @@ function exportExcel() {
   const wb = XLSX.utils.book_new();
   const add = (id, name) => { const rows = ($(id)._export || (() => []))(); if (rows.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), name.slice(0, 31)); };
   const [id, name] = map[state.tab]; add(id, name);
-  if (state.tab === 'managers') add('tblRM', 'Regional managers');
+  if (state.tab === 'managers') { if (state.hasAom) add('tblAOM', 'Area operations managers'); add('tblRM', 'ROMs'); }
   if (state.tab === 'checks') add('tblLarge', 'Large entries');
   if (!wb.SheetNames.length) { toast('Nothing to download for this view.'); return; }
   XLSX.writeFile(wb, `HM Variance — ${name} — ${$('period').textContent.split(' · ')[0]}.xlsx`);
@@ -672,6 +663,7 @@ async function refreshAll() {
   try {
     const [reps, map] = await Promise.all([api('/reports').then(r => r.json()), api('/mapping').then(r => r.json()).catch(() => null)]);
     if (map && map.rows && map.rows.length) setMapping(map.rows, (map.source || 'uploaded') + (map.updated_at ? ` (updated ${String(map.updated_at).slice(0, 10)})` : '')); else setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)');
+    state.sync = map && map.sync || null; syncInfo();
     state.reports = reps;
     if (state.sel === null || (state.sel && !reps.find(r => r.id === state.sel)) || (state.sel === '' && reps.length < 2)) state.sel = reps[0] ? reps[0].id : '';
     renderReportSelect();
@@ -746,10 +738,7 @@ async function deleteReport() {
 async function handleMapFile(file) {
   try {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
-    let rows = null, err = null;
-    const names = wb.SheetNames.slice().sort((a, b) => (b.toLowerCase() === 'new') - (a.toLowerCase() === 'new'));
-    for (const n of names) { try { rows = parseSpan(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '' })); break; } catch (e) { err = e; } }
-    if (!rows) throw err;
+    const { rows } = HMSpan.parseSpanWorkbook(XLSX, wb);
     setMapping(rows, file.name); if (state.all) { buildRecords(); render(); }
     const p = state.offline ? null : await adminPass();
     if (p) { await api('/mapping', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows, source: file.name }) }, p); store.set('hmvAdmin', p); toast(`✓ Mapping saved for everyone (${rows.length} branches).`); }
@@ -762,9 +751,33 @@ async function resetMapping() {
   catch (e) { toast(e.message); }
 }
 
+const aomCol = () => state.hasAom ? [{ h: 'AOM', k: 'aom', l: 1 }] : [];
+
+/* ---------- SharePoint sync of the Span of Control ---------- */
+function syncInfo() {
+  const s = state.sync, el = $('syncInfo');
+  $('btnSync').hidden = state.offline || state.role !== 'admin';
+  if (!s || state.role !== 'admin') { el.textContent = ''; return; }
+  if (!s.configured) { el.textContent = 'SharePoint sync is not set up yet (add the SP_FILE_URL secret in Cloudflare).'; return; }
+  const l = s.last;
+  el.textContent = !l ? 'Syncs every morning at 8:00. Not synced yet.' :
+    `Syncs every morning at 8:00. Last: ${String(l.at).slice(0, 16)} UTC — ${l.ok ? '✓ ' : '✗ '}${l.message}`;
+}
+async function syncNow(force) {
+  const p = await adminPass(); if (!p) return;
+  toast('Reading the store mapping from SharePoint…');
+  try {
+    const r = await (await api('/mapping/sync' + (force ? '?force=1' : ''), { method: 'POST' }, p)).json();
+    toast('✓ ' + r.message); store.set('hmvAdmin', p); storageCache.clear(); await refreshAll();
+  } catch (e) {
+    if (/not applied/.test(e.message) && confirm(e.message + '\n\nApply it anyway?')) return syncNow(true);
+    toast('Sync failed: ' + e.message); refreshAll();
+  }
+}
+
 /* ---------- gate ---------- */
 function lock(msg) { document.body.classList.add('locked'); $('gate').hidden = false; $('gateMsg').textContent = msg || ''; $('gatePw').focus(); }
-function adminUI() { $('tabRemarks').hidden = state.role !== 'admin'; renderReportSelect(); if (state.role === 'admin') loadRemarks(); }
+function adminUI() { $('tabRemarks').hidden = state.role !== 'admin'; renderReportSelect(); syncInfo(); if (state.role === 'admin') loadRemarks(); }
 async function unlock(pw) {
   $('gateBtn').disabled = true; $('gateMsg').textContent = '';
   try {
@@ -798,7 +811,7 @@ document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => switchT
 $('gateBtn').onclick = () => unlock($('gatePw').value);
 $('gatePw').onkeydown = e => { if (e.key === 'Enter') unlock($('gatePw').value); };
 $('repSelect').onchange = e => selectReport(e.target.value);
-$('rmSelect').onchange = () => { $('amSelect').value = ''; $('brSelect').value = ''; fillManagers(); render(); };
+$('rmSelect').onchange = () => { $('aomSelect').value = ''; $('amSelect').value = ''; $('brSelect').value = ''; fillManagers(); render(); };
 $('amSelect').onchange = () => { $('brSelect').value = ''; fillManagers(); render(); };
 ['brSelect', 'catSelect', 'ktSelect', 'incTypos', 'brStatus', 'bzBranch', 'bzCat', 'itGroup', 'remStatus'].forEach(id => $(id).onchange = render);
 ['brSearch', 'wkSearch', 'itSearch', 'rpSearch', 'rpMin', 'rpSar', 'ckSearch', 'remSearch'].forEach(id => $(id).oninput = () => { clearTimeout(render.t); render.t = setTimeout(render, 180); });
@@ -806,6 +819,8 @@ $('limitInput').onchange = () => { const raw = $('limitInput').value.trim(), v =
 $('limitAuto').onclick = () => { state.limitOverride = null; render(); };
 $('fileReport').onchange = e => { const f = e.target.files[0]; e.target.value = ''; document.querySelector('details.more').open = false; f && handleReportFile(f); };
 $('fileMap').onchange = e => { const f = e.target.files[0]; e.target.value = ''; document.querySelector('details.more').open = false; f && handleMapFile(f); };
+$('btnSync').onclick = () => { document.querySelector('details.more').open = false; syncNow(); };
+$('aomSelect').onchange = () => { $('amSelect').value = ''; $('brSelect').value = ''; fillManagers(); render(); };
 $('btnMapReset').onclick = () => { document.querySelector('details.more').open = false; resetMapping(); };
 $('btnDeleteReport').onclick = () => { document.querySelector('details.more').open = false; deleteReport(); };
 $('btnPublish').onclick = () => publish();

@@ -1,5 +1,7 @@
-/* HM Variance Tracker — Cloudflare Worker entry: /api/* goes to the API, everything else is the static site */
+/* HM Variance Tracker — Cloudflare Worker entry: /api/* goes to the API, everything else is the static site.
+   The daily cron (wrangler.toml [triggers]) pulls the Span of Control from SharePoint. */
 import { handleApi } from './api.js';
+import { syncSharePoint, sharePointConfigured } from './sharepoint.js';
 
 export default {
   async fetch(request, env) {
@@ -9,5 +11,9 @@ export default {
       return handleApi(request, env, path);
     }
     return env.ASSETS.fetch(request);
+  },
+  async scheduled(event, env, ctx) {
+    if (!env.DB || !sharePointConfigured(env)) return;   // nothing to do until SharePoint is set up
+    ctx.waitUntil(syncSharePoint(env).then(r => console.log('Span of Control sync:', r.message)));
   }
 };

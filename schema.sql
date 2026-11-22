@@ -41,3 +41,13 @@ CREATE TABLE IF NOT EXISTS remarks (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS remarks_branch ON remarks(branch);
+
+-- Last SharePoint sync of the Span of Control (also created automatically on the first sync)
+CREATE TABLE IF NOT EXISTS sync_status (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  ok            INTEGER,
+  message       TEXT,
+  branches      INTEGER,
+  file_modified TEXT,
+  at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
