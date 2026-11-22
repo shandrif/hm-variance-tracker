@@ -3,6 +3,9 @@
 const $ = id => document.getElementById(id);
 const API = '/api';
 const DAY = 86400000;
+/* min/max without spreading (spreading 100k+ values overflows the call stack) */
+const minOf = (a, f = x => x) => { let m = Infinity; for (const x of a) { const v = f(x); if (v < m) m = v; } return m; };
+const maxOf = (a, f = x => x) => { let m = -Infinity; for (const x of a) { const v = f(x); if (v > m) m = v; } return m; };
 
 /* ---------- formatting ---------- */
 const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
@@ -24,7 +27,7 @@ const state = {
   reports: [],          // list from server [{id,label,from_date,to_date,meta}]
   cache: {},            // id -> parsed report
   local: null,          // freshly uploaded, not yet published
-  sel: '',              // selected report id ('' = all)
+  sel: null,            // selected report id ('' = all combined, null = not chosen yet)
   branches: [], branchByCode: {}, mapSource: 'built-in',
   recs: [],             // active records (enriched)
   limitOverride: null,
@@ -165,7 +168,7 @@ function parseReport(wb, fileName) {
     cols.q.push(+(+row[idx.qty] || 0).toFixed(4)); cols.v.push(+v.toFixed(2)); cols.k.push(weekly);
   }
   if (!cols.d.length) throw new Error('No variance lines found in the file.');
-  const from = Math.min(...cols.d), to = Math.max(...cols.d);
+  const from = minOf(cols.d), to = maxOf(cols.d);
   return { v: 1, file: fileName, sheet, from: dayISO(from), to: dayISO(to), stores, items, cols, issues, rows: cols.d.length };
 }
 
@@ -181,7 +184,9 @@ function expand(rep) {
 function activeReports() {
   if (state.local) return [state.local];
   if (state.sel) return state.cache[state.sel] ? [state.cache[state.sel]] : [];
-  return state.reports.map(r => state.cache[r.id]).filter(Boolean);
+  // newest upload first, so it wins on overlapping days
+  return state.reports.slice().sort((a, b) => String(b.uploaded_at).localeCompare(String(a.uploaded_at)))
+    .map(r => state.cache[r.id]).filter(Boolean);
 }
 function buildRecords() {
   const reps = activeReports();
@@ -198,7 +203,7 @@ function buildRecords() {
   state.all = recs;
   const cats = [...new Set(recs.map(r => r.cat))].sort();
   fillSelect($('catSelect'), cats, 'All categories');
-  fillSelect($('bzCat'), cats, 'All categories');
+  fillSelect($('bzCat'), ['Total', ...cats], 'All categories');
   fillManagers();
 }
 /* typo + large-entry + reversal flags */
@@ -323,10 +328,15 @@ function render() {
   document.querySelectorAll('.tab').forEach(t => t.hidden = !has || t.id !== 'tab-' + state.tab);
   if (!has) return;
   const sc = scope();
+  if (!sc.length && state.tab !== 'remarks' && state.tab !== 'checks') {
+    document.querySelectorAll('.tab').forEach(t => t.hidden = true);
+    $('empty').hidden = false; setEmpty('Nothing for this selection', 'No variance lines match the current filters. Try clearing a filter.');
+    $('scopeInfo').textContent = '0 lines'; return;
+  }
   const typos = state.all.filter(r => r.typo);
   $('scopeInfo').textContent = `${nf0.format(sc.length)} lines · ${new Set(sc.map(r => r.st)).size} branches` + (typos.length && !$('incTypos').checked ? ` · ${typos.length} suspected typo${typos.length > 1 ? 's' : ''} left out` : '');
   const reps = activeReports();
-  const from = Math.min(...state.all.map(r => r.d)), to = Math.max(...state.all.map(r => r.d));
+  const from = minOf(state.all, r => r.d), to = maxOf(state.all, r => r.d);
   $('period').textContent = `${dayLabel(from)} – ${dayLabel(to)} ${new Date(to * DAY).getUTCFullYear()}` + (state.local ? ' · preview (not published)' : reps.length > 1 ? ` · ${reps.length} reports combined` : '');
   try { ({ overview, branches, weekly, items, repeat, breaches, managers, checks, remarks })[state.tab](sc); }
   catch (e) { console.error(e); toast('Something went wrong drawing this tab: ' + e.message); }
@@ -350,7 +360,7 @@ function overview(sc) {
 
   // weekly trend
   const wks = agg(sc, r => r.wk).sort((a, b) => a.key - b.key);
-  const minD = Math.min(...sc.map(r => r.d)), maxD = Math.max(...sc.map(r => r.d));
+  const minD = minOf(sc, r => r.d), maxD = maxOf(sc, r => r.d);
   const wkLbl = w => { const a = Math.max(w, minD), b = Math.min(w + 6, maxD); return `${dayLabel(a)} – ${dayLabel(b)}`; };
   chart('chTrend', { type: 'bar', data: { labels: wks.map(w => [wkLbl(w.key), 'Net ' + sar(w.net)]), datasets: [
     { label: 'Shortage', data: wks.map(w => Math.round(w.short)), backgroundColor: css('--high'), borderRadius: 6, stack: 's' },
@@ -401,7 +411,7 @@ function branches(sc) {
 function weekly(sc) {
   const q = $('wkSearch').value.toLowerCase();
   const wks = [...new Set(sc.map(r => r.wk))].sort((a, b) => a - b);
-  const minD = Math.min(...sc.map(r => r.d)), maxD = Math.max(...sc.map(r => r.d));
+  const minD = minOf(sc, r => r.d), maxD = maxOf(sc, r => r.d);
   const rows = branchStats(sc).filter(b => !q || `${b.branch} ${b.code} ${b.am}`.toLowerCase().includes(q)).map(b => {
     const w = {}; b.recs.forEach(r => w[r.wk] = (w[r.wk] || 0) + r.v);
     const last = w[wks[wks.length - 1]] || 0, prev = w[wks[wks.length - 2]] || 0;
@@ -442,7 +452,7 @@ function repeat(sc) {
   const rows = agg(sc.filter(r => r.v < 0 && !r.rev), r => r.st + '|' + r.ic).map(a => {
     const r0 = a.recs[0];
     return { ...a, branch: r0.branch, code: r0.code, am: r0.am, st: r0.st, ic: r0.ic, name: r0.n, u: r0.u, cat: r0.cat, times: new Set(a.recs.map(r => r.d)).size,
-      weeks: new Set(a.recs.map(r => r.wk)).size, last: Math.max(...a.recs.map(r => r.d)) };
+      weeks: new Set(a.recs.map(r => r.wk)).size, last: maxOf(a.recs, r => r.d) };
   }).filter(r => r.times >= min && -r.short >= minSar && (!q || `${r.branch} ${r.code} ${r.name}`.toLowerCase().includes(q)));
   table($('tblRepeat'), [
     { h: 'Branch', k: 'branch', l: 1, f: r => `<b>${esc(r.branch)}</b> <span class="muted small">${esc(r.code)}</span>`, x: r => r.branch }, { h: 'Area manager', k: 'am', l: 1 },
@@ -492,7 +502,7 @@ function managers(sc) {
       { ...money('net', 'Net SAR'), sort: 1 }, money('short', 'Shortage SAR'), money('surplus', 'Surplus SAR'), money('avg', 'Avg per branch'),
       { h: 'In breach', k: 'breach', f: r => r.breach ? `<span class="chip breach">${r.breach}</span>` : '0' },
       { h: 'Worst branch', k: 'worst', l: 1, val: r => r.worst?.net || 0, f: r => r.worst ? `${esc(r.worst.branch)} <span class="neg">${sar(r.worst.net)}</span>` : '', x: r => r.worst ? `${r.worst.branch} (${Math.round(r.worst.net)})` : '' }
-    ], rows, key, r => { if (key === 'rm') { $('rmSelect').value = r.name; fillManagers(); } else { $('amSelect').value = r.name; } switchTab('branches'); });
+    ], rows, key, r => { if (key === 'rm') { $('rmSelect').value = r.name; fillManagers(); } else { $('amSelect').value = r.name; $('brSelect').value = ''; fillManagers(); } switchTab('branches'); });
   };
   mk(r => r.rm, $('tblRM'), 'rm', 'Regional manager');
   mk(r => r.am, $('tblAM'), 'am', 'Area manager');
@@ -586,7 +596,7 @@ function branchModal(st) {
 }
 function itemModal(ic, st) {
   const sc = scope({ ignoreBranch: !!st }).filter(r => r.ic === ic && (!st || r.st === st));
-  const all = st ? sc : sc;
+  const all = sc;
   if (!all.length) return;
   const r0 = all[0];
   const lines = all.slice().sort((a, b) => a.d - b.d);
@@ -618,8 +628,8 @@ async function mailBreaches() {
   const rows = breachRows(); if (!rows.length) { $('bzStatus').textContent = 'No breaches to email.'; return; }
   await copyBreaches();
   const per = $('period').textContent.split(' · ')[0];
-  const lines = rows.slice(0, 25).map(r => `• ${r['Branch']} — ${r['Variance type']}: ${nf0.format(r['Net SAR'])} SAR (limit ${nf0.format(r['Limit SAR'])})`).join('\n');
-  const body = `Dear team,\n\nPlease find below the inventory variance breaches for ${per}.\n(The full table is copied — press Ctrl+V / Cmd+V here to paste it.)\n\n${lines}${rows.length > 25 ? `\n…and ${rows.length - 25} more` : ''}\n\nPlease review and add your remarks in the Variance Tracker.\n\nRegards`;
+  const lines = rows.slice(0, 15).map(r => `• ${r['Branch']} — ${r['Variance type']}: ${nf0.format(r['Net SAR'])} SAR (limit ${nf0.format(r['Limit SAR'])})`).join('\n');
+  const body = `Dear team,\n\nPlease find below the inventory variance breaches for ${per}.\n(The full table is copied — press Ctrl+V / Cmd+V here to paste it.)\n\n${lines}${rows.length > 15 ? `\n…and ${rows.length - 15} more (see the pasted table)` : ''}\n\nPlease review and add your remarks in the Variance Tracker.\n\nRegards`;
   location.href = `mailto:?subject=${encodeURIComponent('Inventory variance breaches — ' + per)}&body=${encodeURIComponent(body)}`;
 }
 
@@ -647,7 +657,7 @@ function renderReportSelect() {
     [...(state.reports.length > 1 ? [`<option value="">All reports combined</option>`] : []),
      ...state.reports.map(r => `<option value="${esc(r.id)}">${esc(r.label)}</option>`)];
   sel.innerHTML = opts.join('') || '<option value="">No reports yet</option>';
-  sel.value = state.local ? '__local' : state.sel;
+  sel.value = state.local ? '__local' : (state.sel || '');
   $('btnDeleteReport').hidden = !(state.role === 'admin' && state.sel && !state.local);
 }
 const rangeLabel = (a, b) => { const f = d => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); return `${f(a)} – ${f(b)}`; };
@@ -663,7 +673,7 @@ async function refreshAll() {
     const [reps, map] = await Promise.all([api('/reports').then(r => r.json()), api('/mapping').then(r => r.json()).catch(() => null)]);
     if (map && map.rows && map.rows.length) setMapping(map.rows, (map.source || 'uploaded') + (map.updated_at ? ` (updated ${String(map.updated_at).slice(0, 10)})` : '')); else setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)');
     state.reports = reps;
-    if (!reps.find(r => r.id === state.sel)) state.sel = reps[0] ? reps[0].id : '';
+    if (state.sel === null || (state.sel && !reps.find(r => r.id === state.sel)) || (state.sel === '' && reps.length < 2)) state.sel = reps[0] ? reps[0].id : '';
     renderReportSelect();
     if (!reps.length) { state.all = []; setEmpty('No reports published yet', state.role === 'admin' ? 'Use <b>Update data → Upload variance report</b> to add the first one.' : 'Ask the operations admin to upload the variance report.'); render(); return; }
     const ids = state.sel ? [state.sel] : reps.map(r => r.id);
@@ -792,7 +802,7 @@ $('rmSelect').onchange = () => { $('amSelect').value = ''; $('brSelect').value =
 $('amSelect').onchange = () => { $('brSelect').value = ''; fillManagers(); render(); };
 ['brSelect', 'catSelect', 'ktSelect', 'incTypos', 'brStatus', 'bzBranch', 'bzCat', 'itGroup', 'remStatus'].forEach(id => $(id).onchange = render);
 ['brSearch', 'wkSearch', 'itSearch', 'rpSearch', 'rpMin', 'rpSar', 'ckSearch', 'remSearch'].forEach(id => $(id).oninput = () => { clearTimeout(render.t); render.t = setTimeout(render, 180); });
-$('limitInput').onchange = () => { const v = +$('limitInput').value; state.limitOverride = isFinite(v) ? -Math.abs(v) : null; render(); };
+$('limitInput').onchange = () => { const raw = $('limitInput').value.trim(), v = +raw; state.limitOverride = raw !== '' && isFinite(v) && v !== 0 ? -Math.abs(v) : null; render(); };
 $('limitAuto').onclick = () => { state.limitOverride = null; render(); };
 $('fileReport').onchange = e => { const f = e.target.files[0]; e.target.value = ''; document.querySelector('details.more').open = false; f && handleReportFile(f); };
 $('fileMap').onchange = e => { const f = e.target.files[0]; e.target.value = ''; document.querySelector('details.more').open = false; f && handleMapFile(f); };
