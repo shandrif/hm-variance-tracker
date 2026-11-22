@@ -662,7 +662,10 @@ async function refreshAll() {
   setEmpty('Loading…', 'Fetching the published reports.');
   try {
     const [reps, map] = await Promise.all([api('/reports').then(r => r.json()), api('/mapping').then(r => r.json()).catch(() => null)]);
-    if (map && map.rows && map.rows.length) setMapping(map.rows, (map.source || 'uploaded') + (map.updated_at ? ` (updated ${String(map.updated_at).slice(0, 10)})` : '')); else setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)');
+    // the newer of: the daily-synced built-in mapping, or one an admin uploaded / synced into the database
+    const dbDate = map && map.updated_at ? String(map.updated_at).replace(' ', 'T') + 'Z' : '';
+    if (map && map.rows && map.rows.length && dbDate > (window.DEFAULT_MAPPING_DATE || '')) setMapping(map.rows, (map.source || 'uploaded') + ` (updated ${dbDate.slice(0, 10)})`);
+    else setMapping(window.DEFAULT_BRANCHES, builtInLabel());
     state.sync = map && map.sync || null; syncInfo();
     state.reports = reps;
     if (state.sel === null || (state.sel && !reps.find(r => r.id === state.sel)) || (state.sel === '' && reps.length < 2)) state.sel = reps[0] ? reps[0].id : '';
@@ -747,18 +750,19 @@ async function handleMapFile(file) {
 }
 async function resetMapping() {
   const p = await adminPass(); if (!p) return;
-  try { await api('/mapping', { method: 'DELETE' }, p); setMapping(window.DEFAULT_BRANCHES, 'built-in (Span of Control, 22 Oct 2026)'); buildRecords(); render(); toast('Back to the built-in mapping.'); }
+  try { await api('/mapping', { method: 'DELETE' }, p); setMapping(window.DEFAULT_BRANCHES, builtInLabel()); buildRecords(); render(); toast('Back to the built-in mapping.'); }
   catch (e) { toast(e.message); }
 }
 
+const builtInLabel = () => `Span of Control from SharePoint (synced daily · last change ${String(window.DEFAULT_MAPPING_DATE || '').slice(0, 10) || '—'})`;
 const aomCol = () => state.hasAom ? [{ h: 'AOM', k: 'aom', l: 1 }] : [];
 
 /* ---------- SharePoint sync of the Span of Control ---------- */
 function syncInfo() {
   const s = state.sync, el = $('syncInfo');
-  $('btnSync').hidden = state.offline || state.role !== 'admin';
-  if (!s || state.role !== 'admin') { el.textContent = ''; return; }
-  if (!s.configured) { el.textContent = 'SharePoint sync is not set up yet (add the SP_FILE_URL secret in Cloudflare).'; return; }
+  // the in-app button is only for the optional Cloudflare-side sync (SP_FILE_URL secret); the daily Claude sync needs no button
+  $('btnSync').hidden = state.offline || state.role !== 'admin' || !(s && s.configured);
+  if (!s || !s.configured || state.role !== 'admin') { el.textContent = ''; return; }
   const l = s.last;
   el.textContent = !l ? 'Syncs every morning at 8:00. Not synced yet.' :
     `Syncs every morning at 8:00. Last: ${String(l.at).slice(0, 16)} UTC — ${l.ok ? '✓ ' : '✗ '}${l.message}`;

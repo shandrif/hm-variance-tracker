@@ -21,31 +21,28 @@ Breach limit (auto) = average − 1.96 × spread of branch net variance in the p
 Suspected typo = quantity ≥ 1,000× the item's usual quantity **and** ≥ 10,000 SAR.
 
 ## Branch → Area manager → ROM (store mapping)
-The mapping is read every morning at **8:00 (Riyadh)** from the SharePoint file **Master_Location_Mapping.xlsx**
-and saved for everyone, so filtering and sorting by area manager and ROM always follow the latest file.
-Admins can also run it any time: **Update data → Sync store mapping from SharePoint** (the last result is shown there).
+Every morning at **7:47 (Riyadh)** a Claude scheduled task (*Variance Tracker store mapping sync*) reads the SharePoint file
+**UPDATED Span of control (Store Level)** (sheet *New*) with the Microsoft 365 connector and runs
+`scripts/sync-mapping.py`. When an Area Manager, ROM or store changed, it updates `public/data/default-mapping.js`
+and pushes it to `main`, and Cloudflare redeploys — so filtering and sorting by area manager and ROM follow the file.
+On days with no change nothing is committed. A run stops without changing anything if the sheet's columns change,
+fewer than 50 stores are found, or the file has less than half the stores the app has.
 
-- Columns are found by name: store/branch code, store/branch name, *Area Manager* (or AM), *ROM* (or Regional…).
-  An *AOM / Area Operations Manager* column, if the file ever has one, adds an extra filter level.
-- Safety: if the file suddenly lists less than half the stores it had before, it is not applied (the admin can apply it anyway).
-  If the download fails, the previous mapping stays.
-- Fallbacks: **Upload store mapping file** (same columns) or the built-in list in `data/default-mapping.js`.
-- Storages are linked to branches by their B-code, or by the name list in `STORAGE_ALIASES`.
-
-### SharePoint sync setup (one time, Cloudflare dashboard → Worker → Settings → Variables and Secrets)
-1. Add a **Secret** `SP_FILE_URL` = the share link of Master_Location_Mapping.xlsx.
-   (Kept as a secret because this repository is public.)
-2. The link must be shared as **Anyone with the link can view**. If company policy only allows links for
-   signed-in staff, ask IT for an Azure app registration with application permission *Files.Read.All*
-   (or *Sites.Read.All*) and add three more secrets: `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`.
-3. Open the dashboard as admin → **Update data → Sync store mapping from SharePoint** to test it.
+- The app uses the newest of: this daily mapping, or a mapping an admin uploaded (**Update data → Upload store mapping file**).
+  **Use the daily SharePoint mapping** drops an uploaded one.
+- Store codes are taken from the branch name ("B48 - MAAN PLAZA"); rows without a code (e.g. EVENT BR) are skipped.
+  Same code fixes as the Wastage Tracker sync: Taif Shifa B118, Saudi Investment Bank B11, Al Rajhi Bank B05, Abha Dabab B74, Al Ahsa 2 B76.
+- Storages in the variance report are linked to branches by their B-code, or by the name list in `STORAGE_ALIASES`.
+- Optional, not needed: the Worker can also fetch a mapping file itself (`src/sharepoint.js`, cron in `wrangler.toml`)
+  if a `SP_FILE_URL` secret is added in Cloudflare; without it, that part does nothing.
 
 ## Files
 - `public/` – the website (HTML, CSS, JS, logo, mapping, libraries)
 - `src/worker.js` – Cloudflare Worker: sends `/api/*` to `src/api.js`, everything else to `public/`
 - `src/api.js` – reports, mapping and remarks stored in D1
 - `src/sharepoint.js` – daily SharePoint download of the store mapping (cron in `wrangler.toml`)
-- `public/span-parse.js` – reads the mapping workbook (used by the browser upload and the daily sync)
+- `public/span-parse.js` – reads a mapping workbook uploaded in the browser
+- `scripts/sync-mapping.py` – daily sync: Span of Control text → `public/data/default-mapping.js`
 - `wrangler.toml` – Worker name, static files folder and the D1 binding (`DB` → hm-variance-db)
 
 ## Cloudflare setup (one time)
