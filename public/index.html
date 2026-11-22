@@ -23,7 +23,9 @@
         <span class="muted small">The inventory reconciliation export (sheet <b>Data</b>). Each upload is saved as its own report period.</span>
         <button class="btn danger" id="btnDeleteReport" hidden>Delete selected report…</button>
         <hr>
-        <label class="btn">↑ Upload Span of Control<input type="file" id="fileMap" accept=".xlsx,.xls,.csv" hidden></label>
+        <button class="btn primary" id="btnSync" type="button">⟳ Sync store mapping from SharePoint</button>
+        <span class="muted small" id="syncInfo"></span>
+        <label class="btn">↑ Upload store mapping file<input type="file" id="fileMap" accept=".xlsx,.xls,.csv" hidden></label>
         <button class="btn" id="btnMapReset">Reset to built-in mapping</button>
         <span class="muted small" id="mapInfo"></span>
         <hr>
@@ -48,8 +50,11 @@
   <label>Report period
     <select id="repSelect"></select>
   </label>
-  <label>Regional manager
-    <select id="rmSelect"><option value="">All regional managers</option></select>
+  <label>ROM
+    <select id="rmSelect"><option value="">All ROMs</option></select>
+  </label>
+  <label id="aomWrap" hidden>Area operations manager
+    <select id="aomSelect"><option value="">All AOMs</option></select>
   </label>
   <label>Area manager
     <select id="amSelect"><option value="">All area managers</option></select>
@@ -152,8 +157,10 @@
   </section>
 
   <section id="tab-managers" class="tab" hidden>
-    <h2 class="sect">Regional managers</h2>
+    <h2 class="sect">ROMs (regional operations managers)</h2>
     <div class="card tablewrap"><table id="tblRM"></table></div>
+    <h2 class="sect" id="aomTitle" hidden>Area operations managers</h2>
+    <div class="card tablewrap" id="aomTblWrap" hidden><table id="tblAOM"></table></div>
     <h2 class="sect">Area managers</h2>
     <div class="card tablewrap"><table id="tblAM"></table></div>
   </section>
@@ -183,6 +190,7 @@
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="vendor/chart.umd.js"></script>
 <script src="data/default-mapping.js"></script>
+<script src="span-parse.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
